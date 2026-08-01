@@ -29,11 +29,13 @@ export STAGE PLATFORM SILIMATE_ACTIONS_DIR
 case "$LIBC" in
   musl)
     # shellcheck disable=SC2086
-    apk add --no-cache build-base cmake git patchelf ${PACKAGES:-}
+    apk add --no-cache build-base cmake git patchelf \
+      ${WITH_NINJA:+ninja} ${PACKAGES:-}
     ;;
   glibc)
     EXTRA_PACKAGES="${PACKAGES:-}"
     export EXTRA_PACKAGES
+    # WITH_NINJA is forwarded from the workflow's with-ninja input
     # shellcheck disable=SC1091
     . "$SILIMATE_ACTIONS_DIR/scripts/centos7-toolchain.sh"
     ;;

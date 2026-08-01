@@ -94,7 +94,7 @@ jobs:
         [{"name":"Ubuntu 22.04","family":"linux","runner":"ubuntu-22.04","arch":"x86_64"},
          {"name":"macOS 15","family":"macos","runner":"macos-15","arch":"arm64"}]
       apt-packages: zlib1g-dev
-      cmake-args: -DCMAKE_BUILD_TYPE=Release -S selftest
+      source-dir: selftest
       build-dir: build-selftest
       test-command: |
         ./build-selftest/silimate-selftest | grep -q "SELFTEST: PASS"
@@ -115,13 +115,18 @@ jobs:
             TARBALL="silimate-selftest-${platform}.tar.gz"
             [ -f "$TARBALL" ] || { echo "::error::missing $TARBALL"; exit 1; }
 
+            # List once into a file. Piping tar into `grep -q` makes grep exit on
+            # the first match, tar die of SIGPIPE, and pipefail fail the step even
+            # though the match succeeded.
+            tar tzf "$TARBALL" | sort > listing.txt
             echo "=== $TARBALL ==="
-            tar tzf "$TARBALL" | sort
+            cat listing.txt
+
             # The whole point of the bundling scripts: zlib must travel with the
             # binary rather than being borrowed from the build image
-            tar tzf "$TARBALL" | grep -qE 'usr/local/lib/libz\.(so|[0-9.]*dylib)' \
+            grep -qE 'usr/local/lib/libz\.(so|[0-9.]*dylib)' listing.txt \
               || { echo "::error::$TARBALL does not bundle zlib"; exit 1; }
-            tar tzf "$TARBALL" | grep -q 'usr/local/bin/silimate-selftest' \
+            grep -q 'usr/local/bin/silimate-selftest' listing.txt \
               || { echo "::error::$TARBALL has no binary"; exit 1; }
           done
           echo "All three tarballs are self-contained"

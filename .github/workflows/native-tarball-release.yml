@@ -39,6 +39,13 @@ on:
         required: false
         type: string
         default: cmake
+      with-ninja:
+        description: >
+          Install Ninja on the Linux legs. On CentOS 7 it comes from the upstream
+          release, not EPEL, which is archived alongside CentOS 7.
+        required: false
+        type: boolean
+        default: false
       build-anylinux:
         description: Build the Alpine/musl "anylinux" tarball.
         required: false
@@ -144,6 +151,7 @@ jobs:
           PACKAGES: ${{ inputs.alpine-packages }}
           STAGE: ${{ inputs.stage-dir }}
           IMAGE: ${{ inputs.alpine-image }}
+          WITH_NINJA: ${{ inputs.with-ninja && '1' || '' }}
         run: |
           set -euo pipefail
           # Write the build script to a file rather than inlining it into sh -c,
@@ -160,6 +168,7 @@ jobs:
             -e BUILD_SCRIPT=/src/build-script.sh \
             -e SILIMATE_ACTIONS_DIR=/src/.silimate-actions \
             -e SRC_DIR=/src \
+            -e WITH_NINJA="$WITH_NINJA" \
             "$IMAGE" \
             sh /src/.silimate-actions/scripts/container-build.sh musl
 
@@ -209,6 +218,7 @@ jobs:
           PACKAGES: ${{ inputs.centos-packages }}
           STAGE: ${{ inputs.stage-dir }}
           IMAGE: ${{ inputs.centos-image }}
+          WITH_NINJA: ${{ inputs.with-ninja && '1' || '' }}
         run: |
           set -euo pipefail
           printf '%s\n' "$BUILD_SCRIPT" > build-script.sh
@@ -223,6 +233,7 @@ jobs:
             -e BUILD_SCRIPT=/src/build-script.sh \
             -e SILIMATE_ACTIONS_DIR=/src/.silimate-actions \
             -e SRC_DIR=/src \
+            -e WITH_NINJA="$WITH_NINJA" \
             "$IMAGE" \
             bash /src/.silimate-actions/scripts/container-build.sh glibc
 

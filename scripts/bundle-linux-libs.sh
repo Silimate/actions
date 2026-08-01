@@ -62,13 +62,17 @@ done
 # Executables look one level up into lib/, libraries look beside themselves.
 # $ORIGIN is an ELF dynamic-string token resolved by the loader, so it has to
 # reach patchelf literally: single quotes are required here.
-# shellcheck disable=SC2016
 for f in "$STAGE"/bin/*; do
-  [ -f "$f" ] && patchelf --set-rpath '$ORIGIN/../lib' "$f" 2>/dev/null || true
+  if [ -f "$f" ]; then
+    # shellcheck disable=SC2016
+    patchelf --set-rpath '$ORIGIN/../lib' "$f" 2>/dev/null || true
+  fi
 done
-# shellcheck disable=SC2016
 for f in "$STAGE"/lib/*.so*; do
-  [ -f "$f" ] && patchelf --set-rpath '$ORIGIN' "$f" 2>/dev/null || true
+  if [ -f "$f" ]; then
+    # shellcheck disable=SC2016
+    patchelf --set-rpath '$ORIGIN' "$f" 2>/dev/null || true
+  fi
 done
 
 echo "bundle-linux-libs.sh: bundled $(find "$STAGE/lib" -maxdepth 1 -name '*.so*' | wc -l) libraries into $STAGE/lib"

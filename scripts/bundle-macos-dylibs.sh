@@ -47,16 +47,22 @@ done
 
 # Give @rpath somewhere to resolve to
 for f in "$STAGE"/bin/*; do
-  [ -f "$f" ] && install_name_tool -add_rpath "@executable_path/../lib" "$f" 2>/dev/null || true
+  if [ -f "$f" ]; then
+    install_name_tool -add_rpath "@executable_path/../lib" "$f" 2>/dev/null || true
+  fi
 done
 for f in "$STAGE"/lib/*.dylib; do
-  [ -f "$f" ] && install_name_tool -add_rpath "@loader_path" "$f" 2>/dev/null || true
+  if [ -f "$f" ]; then
+    install_name_tool -add_rpath "@loader_path" "$f" 2>/dev/null || true
+  fi
 done
 
 # install_name_tool invalidates the code signature, and arm64 macOS refuses to
 # load a binary whose signature is stale. Re-sign everything ad-hoc.
 for f in "$STAGE"/bin/* "$STAGE"/lib/*.dylib; do
-  [ -f "$f" ] && codesign --force --sign - "$f" 2>/dev/null || true
+  if [ -f "$f" ]; then
+    codesign --force --sign - "$f" 2>/dev/null || true
+  fi
 done
 
 echo "bundle-macos-dylibs.sh: bundled $(find "$STAGE/lib" -maxdepth 1 -name '*.dylib' | wc -l) dylibs into $STAGE/lib"

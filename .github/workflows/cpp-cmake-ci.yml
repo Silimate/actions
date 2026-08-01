@@ -47,6 +47,11 @@ on:
         required: false
         type: string
         default: -DCMAKE_BUILD_TYPE=Release
+      source-dir:
+        description: Directory holding the top-level CMakeLists.txt.
+        required: false
+        type: string
+        default: "."
       build-dir:
         description: Build directory.
         required: false
@@ -119,6 +124,7 @@ jobs:
         env:
           GENERATOR: ${{ inputs.cmake-generator }}
           EXTRA_ARGS: ${{ inputs.cmake-args }}
+          SOURCE_DIR: ${{ inputs.source-dir }}
           BUILD_DIR: ${{ inputs.build-dir }}
         run: |
           set -euo pipefail
@@ -132,7 +138,7 @@ jobs:
           # shellcheck disable=SC2206
           ARGS+=($EXTRA_ARGS ${CMAKE_ARGS:-})
 
-          cmake "${ARGS[@]}" -S . -B "$BUILD_DIR"
+          cmake "${ARGS[@]}" -S "$SOURCE_DIR" -B "$BUILD_DIR"
           cmake --build "$BUILD_DIR" -j"$(getconf _NPROCESSORS_ONLN)"
 
       - name: Test
