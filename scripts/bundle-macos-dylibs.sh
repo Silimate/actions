@@ -5,12 +5,28 @@
 #   bundle-macos-dylibs.sh <stage-dir>
 #
 # <stage-dir> is the prefix holding bin/ and lib/, e.g. /tmp/install/usr/local.
+#
+# Set BIN_DIRS to override which subdirectories hold executables when the
+# product ships more than bin/, e.g. BIN_DIRS="bin license".
 
 set -euo pipefail
 
 STAGE="${1:?usage: bundle-macos-dylibs.sh <stage-dir>}"
+BIN_DIRS="${BIN_DIRS:-bin}"
 
 mkdir -p "$STAGE/lib"
+
+# Expand BIN_DIRS into the list of executables to walk
+executables() {
+  # shellcheck disable=SC2086
+  for d in $BIN_DIRS; do
+    for f in "$STAGE/$d"/*; do
+      if [ -f "$f" ]; then
+        echo "$f"
+      fi
+    done
+  done
+}
 
 bundle_dylibs() {
   for f in "$@"; do
@@ -38,7 +54,8 @@ bundle_dylibs() {
 # not visible from the binaries alone (libtclreadline -> libreadline).
 while :; do
   before=$(find "$STAGE/lib" -maxdepth 1 | wc -l)
-  bundle_dylibs "$STAGE"/bin/* "$STAGE"/lib/*.dylib
+  # shellcheck disable=SC2046
+  bundle_dylibs $(executables) "$STAGE"/lib/*.dylib
   after=$(find "$STAGE/lib" -maxdepth 1 | wc -l)
   if [ "$before" = "$after" ]; then
     break
@@ -46,10 +63,8 @@ while :; do
 done
 
 # Give @rpath somewhere to resolve to
-for f in "$STAGE"/bin/*; do
-  if [ -f "$f" ]; then
-    install_name_tool -add_rpath "@executable_path/../lib" "$f" 2>/dev/null || true
-  fi
+executables | while read -r f; do
+  install_name_tool -add_rpath "@executable_path/../lib" "$f" 2>/dev/null || true
 done
 for f in "$STAGE"/lib/*.dylib; do
   if [ -f "$f" ]; then
@@ -59,7 +74,10 @@ done
 
 # install_name_tool invalidates the code signature, and arm64 macOS refuses to
 # load a binary whose signature is stale. Re-sign everything ad-hoc.
-for f in "$STAGE"/bin/* "$STAGE"/lib/*.dylib; do
+executables | while read -r f; do
+  codesign --force --sign - "$f" 2>/dev/null || true
+done
+for f in "$STAGE"/lib/*.dylib; do
   if [ -f "$f" ]; then
     codesign --force --sign - "$f" 2>/dev/null || true
   fi

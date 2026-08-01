@@ -58,12 +58,16 @@ git submodule foreach --recursive \
 NPROC=$(nproc 2>/dev/null || echo 4)
 export NPROC
 
-mkdir -p "$STAGE/bin" "$STAGE/lib"
+for d in ${BIN_DIRS:-bin} lib; do
+  mkdir -p "$STAGE/$d"
+done
 
 echo "=== build ($PRODUCT $PLATFORM) ==="
 sh -e "$BUILD_SCRIPT"
 
 echo "=== bundle ($LIBC) ==="
+# BIN_DIRS is read from the environment by the bundling script
+export BIN_DIRS="${BIN_DIRS:-bin}"
 "$SILIMATE_ACTIONS_DIR/scripts/bundle-linux-libs.sh" "$LIBC" "$STAGE"
 
 echo "=== package ==="

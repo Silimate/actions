@@ -81,6 +81,28 @@ on:
         required: false
         type: string
         default: /tmp/install/usr/local
+      bin-dirs:
+        description: >
+          Subdirectories of stage-dir holding executables, space separated. Only
+          needs setting for products that ship binaries outside bin/.
+        required: false
+        type: string
+        default: bin
+      anylinux-label:
+        description: Platform label in the musl tarball and artifact name.
+        required: false
+        type: string
+        default: anylinux-amd64
+      manylinux-label:
+        description: Platform label in the glibc tarball and artifact name.
+        required: false
+        type: string
+        default: manylinux2014-amd64
+      macos-label:
+        description: Platform label in the macOS tarball and artifact name.
+        required: false
+        type: string
+        default: macos-arm64
       submodules:
         description: >
           Submodule checkout mode: "none", "true" or "recursive". "none" rather
@@ -152,6 +174,7 @@ jobs:
           STAGE: ${{ inputs.stage-dir }}
           IMAGE: ${{ inputs.alpine-image }}
           WITH_NINJA: ${{ inputs.with-ninja && '1' || '' }}
+          BIN_DIRS: ${{ inputs.bin-dirs }}
         run: |
           set -euo pipefail
           # Write the build script to a file rather than inlining it into sh -c,
@@ -162,13 +185,14 @@ jobs:
             -v "${{ github.workspace }}:/src" -w /src \
             --platform linux/amd64 \
             -e PRODUCT="$PRODUCT" \
-            -e PLATFORM=anylinux-amd64 \
+            -e PLATFORM="${{ inputs.anylinux-label }}" \
             -e PACKAGES="$PACKAGES" \
             -e STAGE="$STAGE" \
             -e BUILD_SCRIPT=/src/build-script.sh \
             -e SILIMATE_ACTIONS_DIR=/src/.silimate-actions \
             -e SRC_DIR=/src \
             -e WITH_NINJA="$WITH_NINJA" \
+            -e BIN_DIRS="$BIN_DIRS" \
             "$IMAGE" \
             sh /src/.silimate-actions/scripts/container-build.sh musl
 
@@ -177,7 +201,7 @@ jobs:
         env:
           SMOKE_TEST: ${{ inputs.smoke-test }}
           IMAGE: ${{ inputs.alpine-image }}
-          TARBALL_NAME: ${{ inputs.product }}-anylinux-amd64.tar.gz
+          TARBALL_NAME: ${{ inputs.product }}-${{ inputs.anylinux-label }}.tar.gz
         run: |
           set -euo pipefail
           printf '%s\n' "$SMOKE_TEST" > smoke-test.sh
@@ -190,8 +214,8 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ inputs.product }}-anylinux-amd64
-          path: ${{ inputs.product }}-anylinux-amd64.tar.gz
+          name: ${{ inputs.product }}-${{ inputs.anylinux-label }}
+          path: ${{ inputs.product }}-${{ inputs.anylinux-label }}.tar.gz
           if-no-files-found: error
 
   build-manylinux:
@@ -219,6 +243,7 @@ jobs:
           STAGE: ${{ inputs.stage-dir }}
           IMAGE: ${{ inputs.centos-image }}
           WITH_NINJA: ${{ inputs.with-ninja && '1' || '' }}
+          BIN_DIRS: ${{ inputs.bin-dirs }}
         run: |
           set -euo pipefail
           printf '%s\n' "$BUILD_SCRIPT" > build-script.sh
@@ -227,13 +252,14 @@ jobs:
             -v "${{ github.workspace }}:/src" -w /src \
             --platform linux/amd64 \
             -e PRODUCT="$PRODUCT" \
-            -e PLATFORM=manylinux2014-amd64 \
+            -e PLATFORM="${{ inputs.manylinux-label }}" \
             -e PACKAGES="$PACKAGES" \
             -e STAGE="$STAGE" \
             -e BUILD_SCRIPT=/src/build-script.sh \
             -e SILIMATE_ACTIONS_DIR=/src/.silimate-actions \
             -e SRC_DIR=/src \
             -e WITH_NINJA="$WITH_NINJA" \
+            -e BIN_DIRS="$BIN_DIRS" \
             "$IMAGE" \
             bash /src/.silimate-actions/scripts/container-build.sh glibc
 
@@ -242,7 +268,7 @@ jobs:
         env:
           SMOKE_TEST: ${{ inputs.smoke-test }}
           IMAGE: ${{ inputs.smoke-test-image }}
-          TARBALL_NAME: ${{ inputs.product }}-manylinux2014-amd64.tar.gz
+          TARBALL_NAME: ${{ inputs.product }}-${{ inputs.manylinux-label }}.tar.gz
         run: |
           set -euo pipefail
           printf '%s\n' "$SMOKE_TEST" > smoke-test.sh
@@ -255,8 +281,8 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ inputs.product }}-manylinux2014-amd64
-          path: ${{ inputs.product }}-manylinux2014-amd64.tar.gz
+          name: ${{ inputs.product }}-${{ inputs.manylinux-label }}
+          path: ${{ inputs.product }}-${{ inputs.manylinux-label }}.tar.gz
           if-no-files-found: error
 
   build-macos:
@@ -289,11 +315,14 @@ jobs:
         env:
           BUILD_SCRIPT: ${{ inputs.build-script }}
           STAGE: ${{ inputs.stage-dir }}
+          BIN_DIRS: ${{ inputs.bin-dirs }}
         run: |
           set -euo pipefail
           printf '%s\n' "$BUILD_SCRIPT" > build-script.sh
-          mkdir -p "$STAGE/bin" "$STAGE/lib"
-          PLATFORM=macos-arm64 \
+          for d in $BIN_DIRS lib; do
+            mkdir -p "$STAGE/$d"
+          done
+          PLATFORM="${{ inputs.macos-label }}" \
           NPROC=$(sysctl -n hw.ncpu) \
           SILIMATE_ACTIONS_DIR="$GITHUB_WORKSPACE/.silimate-actions" \
             bash -e build-script.sh
@@ -301,12 +330,13 @@ jobs:
       - name: Bundle dylibs
         env:
           STAGE: ${{ inputs.stage-dir }}
+          BIN_DIRS: ${{ inputs.bin-dirs }}
         run: ./.silimate-actions/scripts/bundle-macos-dylibs.sh "$STAGE"
 
       - name: Create tarball
         env:
           STAGE: ${{ inputs.stage-dir }}
-          TARBALL_NAME: ${{ inputs.product }}-macos-arm64.tar.gz
+          TARBALL_NAME: ${{ inputs.product }}-${{ inputs.macos-label }}.tar.gz
         run: |
           set -euo pipefail
           # Tar from the install root so the archive extracts with `tar xzf ... -C /`
@@ -318,7 +348,7 @@ jobs:
         if: inputs.smoke-test != ''
         env:
           SMOKE_TEST: ${{ inputs.smoke-test }}
-          TARBALL_NAME: ${{ inputs.product }}-macos-arm64.tar.gz
+          TARBALL_NAME: ${{ inputs.product }}-${{ inputs.macos-label }}.tar.gz
         run: |
           set -euo pipefail
           printf '%s\n' "$SMOKE_TEST" > smoke-test.sh
@@ -326,8 +356,8 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ inputs.product }}-macos-arm64
-          path: ${{ inputs.product }}-macos-arm64.tar.gz
+          name: ${{ inputs.product }}-${{ inputs.macos-label }}
+          path: ${{ inputs.product }}-${{ inputs.macos-label }}.tar.gz
           if-no-files-found: error
 
   release:

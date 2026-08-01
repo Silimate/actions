@@ -6,12 +6,16 @@
 #
 # <stage-dir> is the prefix holding bin/ and lib/, e.g. /tmp/install/usr/local.
 #
+# Set BIN_DIRS to override which subdirectories hold executables when the
+# product ships more than bin/, e.g. BIN_DIRS="bin license".
+#
 # Runs under Alpine's busybox ash and CentOS 7's bash, so POSIX sh only.
 
 set -eu
 
 LIBC="${1:?usage: bundle-linux-libs.sh <musl|glibc> <stage-dir>}"
 STAGE="${2:?usage: bundle-linux-libs.sh <musl|glibc> <stage-dir>}"
+BIN_DIRS="${BIN_DIRS:-bin}"
 
 case "$LIBC" in
   musl|glibc) ;;
@@ -33,6 +37,18 @@ is_system_lib() {
   return 1
 }
 
+# Expand BIN_DIRS into the list of executables to walk
+executables() {
+  # shellcheck disable=SC2086
+  for d in $BIN_DIRS; do
+    for f in "$STAGE/$d"/*; do
+      if [ -f "$f" ]; then
+        echo "$f"
+      fi
+    done
+  done
+}
+
 copy_deps() {
   for f in "$@"; do
     [ -f "$f" ] || continue
@@ -52,7 +68,8 @@ copy_deps() {
 # libncurses). A single pass silently ships a tree that fails to load.
 while :; do
   before=$(find "$STAGE/lib" -maxdepth 1 | wc -l)
-  copy_deps "$STAGE"/bin/* "$STAGE"/lib/*.so*
+  # shellcheck disable=SC2046
+  copy_deps $(executables) "$STAGE"/lib/*.so*
   after=$(find "$STAGE/lib" -maxdepth 1 | wc -l)
   if [ "$before" = "$after" ]; then
     break
@@ -62,11 +79,9 @@ done
 # Executables look one level up into lib/, libraries look beside themselves.
 # $ORIGIN is an ELF dynamic-string token resolved by the loader, so it has to
 # reach patchelf literally: single quotes are required here.
-for f in "$STAGE"/bin/*; do
-  if [ -f "$f" ]; then
-    # shellcheck disable=SC2016
-    patchelf --set-rpath '$ORIGIN/../lib' "$f" 2>/dev/null || true
-  fi
+executables | while read -r f; do
+  # shellcheck disable=SC2016
+  patchelf --set-rpath '$ORIGIN/../lib' "$f" 2>/dev/null || true
 done
 for f in "$STAGE"/lib/*.so*; do
   if [ -f "$f" ]; then
