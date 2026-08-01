@@ -14,6 +14,7 @@ is reachable only from other private repositories, which would exclude the publi
 | `actions/` | Composite actions, run on the runner |
 | `.github/workflows/` | `workflow_call` reusable workflows |
 | `scripts/` | Plain shell, runs **inside** build containers (see below) |
+| `selftest/` | Throwaway CMake project the self-test builds |
 
 ### Why `scripts/` exists separately
 
@@ -86,9 +87,31 @@ Matrix CMake build and `ctest` across Ubuntu and macOS, used by `silisizer`, `li
 
 ### `self-hosted-python-checkin.yml`
 
-The self-hosted Python check-in pipeline used by `preqorsor`, `smdb`, `silimem-mcp`, and
-`silimate-aon`: workspace wipe, checkout with submodule SSH, Python setup, venv, lint, test, and
-the regression email report.
+The self-hosted Python check-in pipeline used by `preqorsor`, `smdb`, `silimem-mcp`,
+`silimate-aon`, `opentitan-bugs`, and `opentitan-bugbench`: workspace wipe, checkout with
+submodule SSH, Python setup, venv, lint, test, and the regression email report.
+
+Every phase is optional, so a repo that only lints, or whose own `make test` builds the venv
+(`create-venv: false`), still fits. The venv is put on `PATH`, so caller commands never need
+`source .venv/bin/activate`.
+
+## Source installers
+
+`scripts/install-*.sh` build the dependencies no distro packages, or that CentOS 7 ships too old
+a version of. They run in a container or on a runner, take an optional version argument, and
+install into `/usr/local` by default:
+
+| Script | Needed by |
+|--------|-----------|
+| `install-cudd.sh` | Every OpenSTA-derived tool; no distro packages CUDD |
+| `install-tcl.sh` | CentOS 7, which only ships Tcl 8.5 |
+| `install-tclreadline.sh` | Every platform; nothing packages it |
+| `install-bison.sh` | CentOS 7, whose bison predates the grammars |
+| `install-autotools.sh` | CentOS 7, for the autoconf 2.71 `autoreconf` needs |
+
+`verify-relocatable.sh` asserts an extracted tarball resolves every shared library without help
+from the build machine, and that macOS binaries carry a valid signature. Call it from a
+`smoke-test:` block.
 
 ## Composite actions
 
@@ -122,6 +145,6 @@ Each action's own `action.yml` documents its inputs.
 platforms. It runs on every push and pull request, and it is the gate for changes here.
 
 ```sh
-shellcheck scripts/*.sh          # scripts are shellcheck-clean
+shellcheck -x scripts/*.sh       # -x follows the source of _common.sh
 actionlint                       # workflows are actionlint-clean
 ```
