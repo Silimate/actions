@@ -42,8 +42,21 @@ on:
         required: false
         type: boolean
         default: false
+      ssh-agent:
+        description: >
+          Load SSH_PRIVATE_KEY into an agent after checkout. Needed when the
+          install step pulls private repos over SSH, which checkout's own key
+          does not cover.
+        required: false
+        type: boolean
+        default: false
       python-version:
         description: Python to install. Empty skips the Python setup step.
+        required: false
+        type: string
+        default: ""
+      python-version-file:
+        description: Read the version from this file instead, e.g. ".python-version".
         required: false
         type: string
         default: ""
@@ -64,6 +77,13 @@ on:
         required: false
         type: string
         default: dev
+      create-venv:
+        description: >
+          Create the venv and install the project. False for repos whose test
+          entrypoint builds its own venv.
+        required: false
+        type: boolean
+        default: true
       pre-test:
         description: Shell run after install and before lint, for downloading prebuilt binaries or building docs.
         required: false
@@ -189,12 +209,19 @@ jobs:
           ref: ${{ inputs.actions-ref }}
           path: .silimate-actions
 
+      - name: Set up SSH agent
+        if: inputs.ssh-agent
+        uses: webfactory/ssh-agent@a6f90b1f127823b31d4d4a8d96047790581349bd # v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
       - name: Set up Python
-        if: inputs.python-version != ''
+        if: inputs.python-version != '' || inputs.python-version-file != ''
         uses: Silimate/actions/actions/setup-python@v1
         with:
           python-version: ${{ inputs.python-version }}
-          method: ${{ inputs.python-setup-method }}
+          python-version-file: ${{ inputs.python-version-file }}
+          method: ${{ inputs.python-version-file != '' && 'action' || inputs.python-setup-method }}
 
       - name: Install project
         if: inputs.install-command != ''
@@ -213,7 +240,7 @@ jobs:
           fi
 
       - name: Create venv and install
-        if: inputs.install-command == ''
+        if: inputs.install-command == '' && inputs.create-venv
         uses: Silimate/actions/actions/python-venv@v1
         with:
           extras: ${{ inputs.venv-extras }}
