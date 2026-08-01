@@ -61,8 +61,9 @@ runs:
         if [ -n "$SOURCE" ] && [ -n "$DESTINATION" ]; then
           case "$METHOD" in
             rsync) rsync --verbose --recursive --rsh="ssh $SSH_OPTS" "$SOURCE" "$DESTINATION" ;;
+            # -r so a directory source works; it is a no-op for a single file
             # shellcheck disable=SC2086
-            scp)   scp $SSH_OPTS "$SOURCE" "$DESTINATION" ;;
+            scp)   scp -r $SSH_OPTS "$SOURCE" "$DESTINATION" ;;
             *) echo "unknown method '$METHOD'" >&2; exit 2 ;;
           esac
         fi
