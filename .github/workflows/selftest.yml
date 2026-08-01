@@ -71,9 +71,16 @@ jobs:
       submodules: none
       alpine-packages: zlib-dev
       centos-packages: zlib-devel
-      macos-packages: cmake
+      macos-packages: cmake zlib
       build-script: |
-        cmake -DCMAKE_BUILD_TYPE=Release -S selftest -B build-selftest
+        EXTRA=""
+        if [ "$PLATFORM" = "macos-arm64" ]; then
+          # macOS ships zlib in /usr/lib, which the bundling script correctly
+          # refuses to copy. Link Homebrew's keg-only zlib instead so there is a
+          # genuine non-system dylib for it to relocate.
+          EXTRA="-DZLIB_ROOT=$(brew --prefix zlib)"
+        fi
+        cmake -DCMAKE_BUILD_TYPE=Release $EXTRA -S selftest -B build-selftest
         cmake --build build-selftest -j"$NPROC"
         cp build-selftest/silimate-selftest "$STAGE/bin/"
       smoke-test: |
