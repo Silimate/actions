@@ -5,11 +5,13 @@
 # Environment:
 #   SHORT_SHA, FULL_SHA, DATE   From build-metadata.sh
 #   REPO_URL                    e.g. https://github.com/Silimate/vcd2fst
+#   INSTALL_PREFIX              Where the tarball extracts to, default /
 #   EXTRA_NOTES                 Optional markdown appended at the end
 
 set -euo pipefail
 
 : "${GITHUB_OUTPUT:?release-notes.sh must run inside GitHub Actions}"
+INSTALL_PREFIX="${INSTALL_PREFIX:-/}"
 
 {
   echo "Automated build from \`${GITHUB_REF_NAME:-main}\` @ [\`${SHORT_SHA}\`](${REPO_URL}/commit/${FULL_SHA})"
@@ -22,7 +24,7 @@ describe() {
   case "$1" in
     *-anylinux-amd64.tar.gz)      echo "Linux amd64 (musl, statically portable)" ;;
     *-manylinux2014-amd64.tar.gz) echo "Linux amd64 (manylinux2014, glibc 2.17+)" ;;
-    *-linux-amd64.tar.gz)         echo "Linux amd64" ;;
+    *-linux-amd64.tar.gz)         echo "Linux amd64 (glibc 2.17+)" ;;
     *-macos-arm64.tar.gz)         echo "macOS arm64 (Apple Silicon)" ;;
     *)                            echo "$1" ;;
   esac
@@ -32,7 +34,7 @@ describe() {
 ASSETS=""
 for f in *.tar.gz; do
   [ -f "$f" ] || continue
-  echo "| $(describe "$f") | \`$f\` | \`sudo tar xzf $f -C /\` |" >> release_notes.md
+  echo "| $(describe "$f") | \`$f\` | \`sudo tar xzf $f -C $INSTALL_PREFIX\` |" >> release_notes.md
   ASSETS="$ASSETS $f"
 done
 

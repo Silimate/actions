@@ -123,6 +123,11 @@ on:
         required: false
         type: string
         default: ubuntu:22.04
+      install-prefix:
+        description: Directory the tarball is meant to be extracted into, shown in the release notes.
+        required: false
+        type: string
+        default: /
       extra-release-notes:
         description: Markdown appended to the generated release notes.
         required: false
@@ -201,6 +206,7 @@ jobs:
         env:
           SMOKE_TEST: ${{ inputs.smoke-test }}
           IMAGE: ${{ inputs.alpine-image }}
+          BIN_DIRS: ${{ inputs.bin-dirs }}
           TARBALL_NAME: ${{ inputs.product }}-${{ inputs.anylinux-label }}.tar.gz
         run: |
           set -euo pipefail
@@ -210,6 +216,8 @@ jobs:
           docker run --rm -v "${{ github.workspace }}:/src" -w /src \
             --platform linux/amd64 \
             -e TARBALL="/src/$TARBALL_NAME" \
+            -e BIN_DIRS="$BIN_DIRS" \
+            -e SILIMATE_ACTIONS_DIR=/src/.silimate-actions \
             "$IMAGE" sh -e /src/smoke-test.sh
 
       - uses: actions/upload-artifact@v7
@@ -268,6 +276,7 @@ jobs:
         env:
           SMOKE_TEST: ${{ inputs.smoke-test }}
           IMAGE: ${{ inputs.smoke-test-image }}
+          BIN_DIRS: ${{ inputs.bin-dirs }}
           TARBALL_NAME: ${{ inputs.product }}-${{ inputs.manylinux-label }}.tar.gz
         run: |
           set -euo pipefail
@@ -277,6 +286,8 @@ jobs:
           docker run --rm -v "${{ github.workspace }}:/src" -w /src \
             --platform linux/amd64 \
             -e TARBALL="/src/$TARBALL_NAME" \
+            -e BIN_DIRS="$BIN_DIRS" \
+            -e SILIMATE_ACTIONS_DIR=/src/.silimate-actions \
             "$IMAGE" bash -e /src/smoke-test.sh
 
       - uses: actions/upload-artifact@v7
@@ -348,11 +359,14 @@ jobs:
         if: inputs.smoke-test != ''
         env:
           SMOKE_TEST: ${{ inputs.smoke-test }}
+          BIN_DIRS: ${{ inputs.bin-dirs }}
           TARBALL_NAME: ${{ inputs.product }}-${{ inputs.macos-label }}.tar.gz
         run: |
           set -euo pipefail
           printf '%s\n' "$SMOKE_TEST" > smoke-test.sh
-          TARBALL="$GITHUB_WORKSPACE/$TARBALL_NAME" bash -e smoke-test.sh
+          TARBALL="$GITHUB_WORKSPACE/$TARBALL_NAME" \
+          SILIMATE_ACTIONS_DIR="$GITHUB_WORKSPACE/.silimate-actions" \
+            bash -e smoke-test.sh
 
       - uses: actions/upload-artifact@v7
         with:
@@ -396,6 +410,7 @@ jobs:
           FULL_SHA: ${{ steps.meta.outputs.full_sha }}
           DATE: ${{ steps.meta.outputs.date }}
           EXTRA_NOTES: ${{ inputs.extra-release-notes }}
+          INSTALL_PREFIX: ${{ inputs.install-prefix }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: ./.silimate-actions/scripts/release-notes.sh
 

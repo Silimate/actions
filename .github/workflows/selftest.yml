@@ -90,6 +90,7 @@ jobs:
         tar xzf "$TARBALL" -C /tmp/smoke
         /tmp/smoke/usr/local/bin/silimate-selftest | tee /tmp/smoke/out.log
         grep -q "SELFTEST: PASS" /tmp/smoke/out.log
+        PREFIX=usr/local "$SILIMATE_ACTIONS_DIR/scripts/verify-relocatable.sh" /tmp/smoke
 
   cpp-cmake-ci:
     name: cpp-cmake-ci
