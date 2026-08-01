@@ -118,6 +118,11 @@ on:
       SSH_PRIVATE_KEY:
         description: Deploy key for private submodules.
         required: false
+      GH_PAT:
+        description: >
+          Exported as GH_TOKEN. Needed by Makefile targets that use gh to pull
+          release assets from other Silimate repos.
+        required: false
       MAIL_USERNAME:
         description: SMTP username for the regression report.
         required: false
@@ -130,6 +135,8 @@ jobs:
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT }}
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
@@ -197,6 +204,13 @@ jobs:
           set -euo pipefail
           printf '%s\n' "$INSTALL_COMMAND" > .ci-install.sh
           bash -e .ci-install.sh
+
+          # Put the venv on PATH so later steps behave the same whether the venv
+          # came from install-command or from the built-in python-venv action
+          if [ -d .venv/bin ]; then
+            (cd .venv/bin && pwd) >> "$GITHUB_PATH"
+            echo "VIRTUAL_ENV=$(cd .venv && pwd)" >> "$GITHUB_ENV"
+          fi
 
       - name: Create venv and install
         if: inputs.install-command == ''
