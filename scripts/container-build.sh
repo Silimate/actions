@@ -45,6 +45,11 @@ case "$LIBC" in
     ;;
 esac
 
+# Dependencies built from source land in /usr/local/lib, which CentOS 7's loader
+# does not search, so ldd would report them missing during bundling
+LD_LIBRARY_PATH="/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH
+
 cd "$SRC_DIR"
 
 # The checkout is owned by the runner user, not root, so git refuses to touch it

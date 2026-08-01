@@ -27,7 +27,8 @@ jobs:
           set -euo pipefail
           sudo apt-get update -y
           sudo apt-get install -y shellcheck
-          shellcheck scripts/*.sh
+          # -x so the install-* scripts' source of _common.sh is followed
+          shellcheck -x scripts/*.sh
 
       - name: Run actionlint
         uses: docker://rhysd/actionlint:latest

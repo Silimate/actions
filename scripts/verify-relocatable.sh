@@ -24,11 +24,11 @@ FAILED=0
 CHECKED=0
 
 check_linux() {
-  # ldd prints "not found" for every dependency the loader cannot resolve, which
-  # is exactly the failure a missing bundled library produces at runtime
-  if ldd "$1" 2>/dev/null | grep -q "not found"; then
+  # An unresolvable dependency is "not found" under glibc and "Error loading
+  # shared library" under musl; either one means the bundle is incomplete
+  if ldd "$1" 2>&1 | grep -qE "not found|Error loading shared library"; then
     echo "::error::$1 has unresolved libraries:"
-    ldd "$1" 2>/dev/null | grep "not found"
+    ldd "$1" 2>&1 | grep -E "not found|Error loading shared library"
     FAILED=1
   fi
 }
