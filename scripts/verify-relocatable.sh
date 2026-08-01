@@ -36,7 +36,9 @@ check_linux() {
 check_macos() {
   # Anything still pointing at an absolute path outside the OS directories came
   # from the build machine and will not exist on a user's Mac
-  otool -L "$1" | awk 'NR>1 {print $1}' | while read -r lib; do
+  # Dependency lines are tab-indented; unindented ones are headers, and a
+  # universal binary prints one header per architecture, not just the first
+  otool -L "$1" | awk '/^[[:space:]]/ {print $1}' | while read -r lib; do
     case "$lib" in
       /usr/lib/*|/System/*|@rpath/*|@loader_path/*|@executable_path/*) ;;
       *) echo "::error::$1 still references $lib"; exit 1 ;;

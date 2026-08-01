@@ -31,8 +31,9 @@ executables() {
 bundle_dylibs() {
   for f in "$@"; do
     [ -f "$f" ] || continue
-    # Line 1 of otool -L output is the file name itself, hence NR>1
-    otool -L "$f" 2>/dev/null | awk 'NR>1 {print $1}' | while read -r lib; do
+    # Dependency lines are tab-indented; unindented ones name the file itself,
+    # once per architecture in a universal binary
+    otool -L "$f" 2>/dev/null | awk '/^[[:space:]]/ {print $1}' | while read -r lib; do
       # Skip OS-supplied dylibs and paths we have already rewritten
       # (@rpath/... is not a real file, so the -f test catches those too)
       [ -f "$lib" ] || continue
