@@ -1,0 +1,23 @@
+name: Bundle Linux shared libraries
+description: >
+  Copy non-system shared libraries next to the staged binaries and set RPATHs, so the
+  tarball runs on a machine without the build dependencies.
+
+  Only for builds that run directly on the runner. Container builds must call
+  scripts/bundle-linux-libs.sh from inside the container instead, because a composite
+  action cannot reach into a docker run.
+
+inputs:
+  libc:
+    description: "'musl' or 'glibc'. Determines which libraries count as system-supplied."
+    required: true
+  stage-dir:
+    description: Prefix holding bin/ and lib/, e.g. /tmp/install/usr/local.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Bundle shared libraries
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/../../scripts/bundle-linux-libs.sh" "${{ inputs.libc }}" "${{ inputs.stage-dir }}"'

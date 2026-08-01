@@ -1,0 +1,27 @@
+name: Clean self-hosted workspace
+description: >
+  Wipe a stale clone left behind by a previous run before checking out. Self-hosted
+  runners reuse the working directory, so root-owned files from a container build can
+  make the next checkout fail.
+
+inputs:
+  workspace-name:
+    description: Directory name of the clone, relative to the runner work dir. Defaults to the repo name.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Remove previous clone
+      shell: bash
+      env:
+        WORKSPACE_NAME: ${{ inputs.workspace-name }}
+      run: |
+        set -euo pipefail
+        NAME="${WORKSPACE_NAME:-$(basename "$GITHUB_REPOSITORY")}"
+        cd ..
+        # Container builds leave root-owned files behind, so this needs sudo
+        sudo rm -rf "$NAME"
+        mkdir -p "$NAME"
+        echo "Reset workspace $PWD/$NAME"

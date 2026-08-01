@@ -1,0 +1,36 @@
+name: Build metadata
+description: >
+  Emit the commit and date facts that every Silimate release workflow derives its
+  tag and release notes from. Requires a full-history checkout.
+
+inputs:
+  working-directory:
+    description: Directory to read git metadata from.
+    required: false
+    default: "."
+
+outputs:
+  short_sha:
+    description: Abbreviated commit SHA.
+    value: ${{ steps.meta.outputs.short_sha }}
+  full_sha:
+    description: Full commit SHA.
+    value: ${{ steps.meta.outputs.full_sha }}
+  date:
+    description: Build date, UTC, as YYYY-MM-DD.
+    value: ${{ steps.meta.outputs.date }}
+  tag:
+    description: Canonical permanent release tag, build-<date>-<short_sha>.
+    value: ${{ steps.meta.outputs.tag }}
+  title:
+    description: Canonical release title.
+    value: ${{ steps.meta.outputs.title }}
+
+runs:
+  using: composite
+  steps:
+    - name: Collect build metadata
+      id: meta
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: '"$GITHUB_ACTION_PATH/../../scripts/build-metadata.sh"'

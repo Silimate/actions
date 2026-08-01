@@ -1,0 +1,26 @@
+name: Install GitHub CLI
+description: >
+  Install gh on a Debian/Ubuntu runner that does not already have it. GitHub-hosted
+  runners ship it; self-hosted ones generally do not.
+
+runs:
+  using: composite
+  steps:
+    - name: Install gh
+      shell: bash
+      run: |
+        set -euo pipefail
+        if command -v gh >/dev/null 2>&1; then
+          gh --version | head -1
+          exit 0
+        fi
+
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+          | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+          | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+        # cnf-update-db chokes on the new list on some images and fails the update
+        sudo rm -f /usr/lib/cnf-update-db || true
+        sudo apt-get update
+        sudo apt-get install -y gh
+        gh --version | head -1

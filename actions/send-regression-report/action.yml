@@ -1,0 +1,97 @@
+name: Send regression report
+description: >
+  Package a test-results directory and email the HTML report. Intended to run with
+  `if: success() || failure()` so a failing regression still gets reported.
+
+inputs:
+  report-glob:
+    description: 'Glob matching the HTML report, e.g. "tests/results/report_not_large_test.html". First match wins.'
+    required: true
+  results-dir:
+    description: Directory to tar up and attach. Empty skips the tarball.
+    required: false
+    default: ""
+  tarball:
+    description: Path of the tarball to create from results-dir.
+    required: false
+    default: ""
+  extra-attachments:
+    description: Additional comma-separated files to attach.
+    required: false
+    default: ""
+  post-process:
+    description: Shell run before packaging, for report title rewrites and coverage embedding.
+    required: false
+    default: ""
+  to:
+    description: Recipients.
+    required: false
+    default: all@silimate.com
+  subject:
+    description: Email subject.
+    required: false
+    default: Github Actions Regression
+  from:
+    description: Sender display name.
+    required: false
+    default: GitHub Actions Regressions
+  mail-username:
+    description: SMTP username. Pass secrets.MAIL_USERNAME.
+    required: true
+  mail-password:
+    description: SMTP password. Pass secrets.MAIL_PASSWORD.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Package results
+      id: package
+      shell: bash
+      env:
+        REPORT_GLOB: ${{ inputs.report-glob }}
+        RESULTS_DIR: ${{ inputs.results-dir }}
+        TARBALL: ${{ inputs.tarball }}
+        EXTRA_ATTACHMENTS: ${{ inputs.extra-attachments }}
+        POST_PROCESS: ${{ inputs.post-process }}
+      run: |
+        set -euo pipefail
+
+        if [ -n "$POST_PROCESS" ]; then
+          bash -e -c "$POST_PROCESS"
+        fi
+
+        ATTACHMENTS="$EXTRA_ATTACHMENTS"
+        if [ -n "$RESULTS_DIR" ] && [ -n "$TARBALL" ]; then
+          tar -czf "$TARBALL" "$RESULTS_DIR"
+          du -sh "$TARBALL"
+          ATTACHMENTS="${ATTACHMENTS:+$ATTACHMENTS,}$TARBALL"
+        fi
+
+        # The report filename varies per repo and sometimes per run, so resolve
+        # it by glob and take the first match
+        # shellcheck disable=SC2086
+        REPORT=$(ls -1 $REPORT_GLOB 2>/dev/null | head -1 || true)
+        if [ -z "$REPORT" ]; then
+          echo "::warning::no report matched '$REPORT_GLOB'; sending without an HTML body"
+        fi
+
+        {
+          echo "report=$REPORT"
+          echo "attachments=$ATTACHMENTS"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Send report
+      uses: dawidd6/action-send-mail@v4
+      with:
+        server_address: smtp.gmail.com
+        server_port: 465
+        secure: true
+        username: ${{ inputs.mail-username }}
+        password: ${{ inputs.mail-password }}
+        from: ${{ inputs.from }}
+        to: ${{ inputs.to }}
+        subject: ${{ inputs.subject }}
+        html_body: ${{ steps.package.outputs.report && format('file://{0}', steps.package.outputs.report) || '' }}
+        body: ${{ steps.package.outputs.report && '' || 'No HTML report was produced for this run.' }}
+        attachments: ${{ steps.package.outputs.attachments }}

@@ -1,0 +1,144 @@
+name: C++ CMake CI
+
+# Matrix build-and-test for the OpenSTA-derived C++ tools: apt or brew dependencies,
+# an optional CUDD build, then configure/build/test.
+
+on:
+  workflow_call:
+    inputs:
+      runners:
+        description: >
+          JSON list of {name, family, runner, arch} objects. family is "linux" or
+          "macos" and decides which dependency step runs.
+        required: false
+        type: string
+        default: >-
+          [{"name":"Ubuntu 22.04","family":"linux","runner":"ubuntu-22.04","arch":"x86_64"},
+           {"name":"macOS 15","family":"macos","runner":"macos-15","arch":"arm64"}]
+      apt-packages:
+        description: Packages for the Linux legs.
+        required: false
+        type: string
+        default: ""
+      macos-setup:
+        description: >
+          Shell for the macOS legs. Typically a brew bundle or brew install, plus
+          appends to $GITHUB_ENV for PATH and CMAKE_ARGS.
+        required: false
+        type: string
+        default: ""
+      install-cudd:
+        description: Build and install CUDD before configuring.
+        required: false
+        type: boolean
+        default: false
+      cudd-version:
+        description: CUDD version to build.
+        required: false
+        type: string
+        default: 3.0.0
+      cmake-generator:
+        description: 'CMake generator, e.g. "Ninja". Empty uses the platform default.'
+        required: false
+        type: string
+        default: ""
+      cmake-args:
+        description: Extra arguments passed to the configure step. $CMAKE_ARGS from macos-setup is appended too.
+        required: false
+        type: string
+        default: -DCMAKE_BUILD_TYPE=Release
+      build-dir:
+        description: Build directory.
+        required: false
+        type: string
+        default: build
+      test-command:
+        description: Shell that runs the tests, from the repository root.
+        required: false
+        type: string
+        default: ctest --test-dir build --output-on-failure
+      submodules:
+        description: >
+          Submodule checkout mode: "none", "true" or "recursive". "none" rather
+          than "false" because actionlint rejects a quoted boolean for a string
+          input; "false" still works if you prefer it.
+        required: false
+        type: string
+        default: "true"
+      actions-ref:
+        description: Ref of Silimate/actions to use for the shared scripts.
+        required: false
+        type: string
+        default: v1
+
+jobs:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.runners) }}
+    name: ${{ matrix.os.name }} | ${{ matrix.os.arch }}
+    runs-on: ${{ matrix.os.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: ${{ inputs.submodules == 'none' && 'false' || inputs.submodules }}
+
+      - name: Check out Silimate/actions
+        uses: actions/checkout@v7
+        with:
+          repository: Silimate/actions
+          ref: ${{ inputs.actions-ref }}
+          path: .silimate-actions
+
+      - name: Apt dependencies
+        if: matrix.os.family == 'linux' && inputs.apt-packages != ''
+        env:
+          APT_PACKAGES: ${{ inputs.apt-packages }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          # shellcheck disable=SC2086
+          sudo apt-get install -y $APT_PACKAGES
+
+      - name: macOS dependencies
+        if: matrix.os.family == 'macos' && inputs.macos-setup != ''
+        env:
+          MACOS_SETUP: ${{ inputs.macos-setup }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$MACOS_SETUP" > macos-setup.sh
+          bash -e macos-setup.sh
+
+      - name: Install CUDD
+        if: inputs.install-cudd
+        run: ./.silimate-actions/scripts/install-cudd.sh "${{ inputs.cudd-version }}"
+
+      - name: Configure and build
+        env:
+          GENERATOR: ${{ inputs.cmake-generator }}
+          EXTRA_ARGS: ${{ inputs.cmake-args }}
+          BUILD_DIR: ${{ inputs.build-dir }}
+        run: |
+          set -euo pipefail
+          ARGS=()
+          if [ -n "$GENERATOR" ]; then
+            ARGS+=(-G "$GENERATOR")
+          fi
+          # Deliberately unquoted: both hold several arguments in one string.
+          # CMAKE_ARGS comes from macos-setup via $GITHUB_ENV, so it is only
+          # set on the macOS legs.
+          # shellcheck disable=SC2206
+          ARGS+=($EXTRA_ARGS ${CMAKE_ARGS:-})
+
+          cmake "${ARGS[@]}" -S . -B "$BUILD_DIR"
+          cmake --build "$BUILD_DIR" -j"$(getconf _NPROCESSORS_ONLN)"
+
+      - name: Test
+        env:
+          TEST_COMMAND: ${{ inputs.test-command }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$TEST_COMMAND" > test-command.sh
+          bash -e test-command.sh

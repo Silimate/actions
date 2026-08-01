@@ -1,0 +1,18 @@
+name: Bundle macOS dylibs
+description: >
+  Copy non-system dylibs next to the staged binaries, rewrite their load paths to
+  @rpath, add the matching rpath entries, and re-sign. Without the re-sign step arm64
+  macOS refuses to load the binaries, because install_name_tool invalidates the
+  existing signature.
+
+inputs:
+  stage-dir:
+    description: Prefix holding bin/ and lib/, e.g. /tmp/install/usr/local.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Bundle dylibs
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/../../scripts/bundle-macos-dylibs.sh" "${{ inputs.stage-dir }}"'

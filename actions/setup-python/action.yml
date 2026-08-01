@@ -1,0 +1,72 @@
+name: Setup Python
+description: >
+  Provide a specific Python. Uses actions/setup-python on GitHub-hosted runners, or
+  installs from the deadsnakes PPA on self-hosted Ubuntu runners where setup-python
+  cannot write to the tool cache.
+
+inputs:
+  python-version:
+    description: Version to install, e.g. "3.13". Ignored when python-version-file is set.
+    required: false
+    default: ""
+  python-version-file:
+    description: File to read the version from, e.g. ".python-version".
+    required: false
+    default: ""
+  method:
+    description: "'action' to use actions/setup-python, 'deadsnakes' to apt-install on a self-hosted Ubuntu runner."
+    required: false
+    default: action
+  extra-apt-packages:
+    description: Extra apt packages to install alongside Python in deadsnakes mode.
+    required: false
+    default: make zip unzip
+
+outputs:
+  python-version:
+    description: The Python version that ended up on PATH.
+    value: ${{ steps.report.outputs.python-version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      if: inputs.method == 'action'
+      uses: actions/setup-python@v7
+      with:
+        python-version: ${{ inputs.python-version }}
+        python-version-file: ${{ inputs.python-version-file }}
+
+    - name: Set up Python from deadsnakes
+      if: inputs.method == 'deadsnakes'
+      shell: bash
+      env:
+        PYTHON_VERSION: ${{ inputs.python-version }}
+        EXTRA_APT_PACKAGES: ${{ inputs.extra-apt-packages }}
+      run: |
+        set -euo pipefail
+        : "${PYTHON_VERSION:?deadsnakes mode requires python-version}"
+
+        # Self-hosted runners persist between jobs, so skip the install entirely
+        # when the right interpreter is already the default
+        if python3 --version 2>&1 | grep -q "$PYTHON_VERSION"; then
+          python3 --version
+          exit 0
+        fi
+
+        sudo apt-get update -y
+        sudo apt-get install -y software-properties-common
+        sudo add-apt-repository -y ppa:deadsnakes/ppa
+        sudo apt-get update -y
+        # shellcheck disable=SC2086
+        sudo apt-get install -y $EXTRA_APT_PACKAGES \
+          "python${PYTHON_VERSION}" \
+          "python${PYTHON_VERSION}-venv" \
+          "python${PYTHON_VERSION}-dev"
+        sudo update-alternatives --install /usr/bin/python3 python3 "/usr/bin/python${PYTHON_VERSION}" 1
+        python3 --version
+
+    - name: Report version
+      id: report
+      shell: bash
+      run: echo "python-version=$(python3 -c 'import platform; print(platform.python_version())')" >> "$GITHUB_OUTPUT"

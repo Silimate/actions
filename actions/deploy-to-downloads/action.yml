@@ -1,0 +1,76 @@
+name: Deploy to downloads server
+description: >
+  Copy artifacts to a Silimate server over SSH with rsync or scp, and optionally run a
+  command there afterwards. The key is written to a temp file and removed on exit.
+
+inputs:
+  ssh-key:
+    description: >
+      Private key with access to the target host. Composite actions cannot read
+      secrets directly, so it has to come in as an input.
+    required: true
+  source:
+    description: Local path to copy. A trailing slash on a directory copies its contents.
+    required: false
+    default: ""
+  destination:
+    description: 'Remote target, e.g. "ubuntu@downloads.silimate.com:/usr/share/nginx/pypi/pyosys/".'
+    required: false
+    default: ""
+  method:
+    description: "'rsync' or 'scp'."
+    required: false
+    default: rsync
+  remote-command:
+    description: Command to run on the host after copying. Runs even when source is empty.
+    required: false
+    default: ""
+  host:
+    description: Host for remote-command when no destination is given, e.g. "root@ftp.silimate.com".
+    required: false
+    default: ""
+  connect-timeout:
+    description: SSH connect timeout in seconds.
+    required: false
+    default: "15"
+
+runs:
+  using: composite
+  steps:
+    - name: Deploy over SSH
+      shell: bash
+      env:
+        DEPLOY_SSH_KEY: ${{ inputs.ssh-key }}
+        SOURCE: ${{ inputs.source }}
+        DESTINATION: ${{ inputs.destination }}
+        METHOD: ${{ inputs.method }}
+        REMOTE_COMMAND: ${{ inputs.remote-command }}
+        HOST: ${{ inputs.host }}
+        CONNECT_TIMEOUT: ${{ inputs.connect-timeout }}
+      run: |
+        set -euo pipefail
+
+        KEY_FILE=$(mktemp)
+        # Always drop the key, including when a copy fails partway through
+        trap 'rm -f "$KEY_FILE"' EXIT
+        printf '%s\n' "$DEPLOY_SSH_KEY" > "$KEY_FILE"
+        chmod 600 "$KEY_FILE"
+
+        SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=$CONNECT_TIMEOUT -i $KEY_FILE"
+
+        if [ -n "$SOURCE" ] && [ -n "$DESTINATION" ]; then
+          case "$METHOD" in
+            rsync) rsync --verbose --recursive --rsh="ssh $SSH_OPTS" "$SOURCE" "$DESTINATION" ;;
+            # shellcheck disable=SC2086
+            scp)   scp $SSH_OPTS "$SOURCE" "$DESTINATION" ;;
+            *) echo "unknown method '$METHOD'" >&2; exit 2 ;;
+          esac
+        fi
+
+        if [ -n "$REMOTE_COMMAND" ]; then
+          # Fall back to the host embedded in destination when host is not given
+          TARGET="${HOST:-${DESTINATION%%:*}}"
+          : "${TARGET:?remote-command needs either host or destination}"
+          # shellcheck disable=SC2086
+          ssh $SSH_OPTS "$TARGET" "$REMOTE_COMMAND"
+        fi

@@ -1,0 +1,127 @@
+name: Self-test
+
+# Gate for changes to this repository. Builds a throwaway CMake project that links
+# zlib through the real reusable workflows on all three platforms, then extracts the
+# tarballs on a clean image and runs the binary. If the bundling scripts drop a
+# library or leave a stale code signature, this fails.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    name: Lint
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run shellcheck
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y shellcheck
+          shellcheck scripts/*.sh
+
+      - name: Run actionlint
+        uses: docker://rhysd/actionlint:latest
+        with:
+          args: -color
+
+      - name: Validate composite action definitions
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, sys, yaml
+
+          failures = []
+          for path in sorted(glob.glob("actions/*/action.yml")):
+              spec = yaml.safe_load(open(path))
+              if not spec.get("description"):
+                  failures.append(f"{path}: missing description")
+              runs = spec.get("runs", {})
+              if runs.get("using") != "composite":
+                  failures.append(f"{path}: runs.using must be composite")
+              # Every input needs a description so the action is self-documenting
+              for name, meta in (spec.get("inputs") or {}).items():
+                  if not meta.get("description"):
+                      failures.append(f"{path}: input '{name}' has no description")
+              print(f"checked {path}")
+
+          if failures:
+              print("\n".join(failures), file=sys.stderr)
+              sys.exit(1)
+          PY
+
+  native-tarball:
+    name: native-tarball-release
+    uses: ./.github/workflows/native-tarball-release.yml
+    with:
+      product: silimate-selftest
+      # Pin the shared scripts to this exact commit so the run tests the change
+      # under review rather than whatever v1 currently points at
+      actions-ref: ${{ github.sha }}
+      publish: false
+      submodules: none
+      alpine-packages: zlib-dev
+      centos-packages: zlib-devel
+      macos-packages: cmake
+      build-script: |
+        cmake -DCMAKE_BUILD_TYPE=Release -S selftest -B build-selftest
+        cmake --build build-selftest -j"$NPROC"
+        cp build-selftest/silimate-selftest "$STAGE/bin/"
+      smoke-test: |
+        # Extract somewhere unrelated to the build tree so the binary can only
+        # resolve libraries through the RPATHs the bundling scripts set
+        rm -rf /tmp/smoke && mkdir -p /tmp/smoke
+        tar xzf "$TARBALL" -C /tmp/smoke
+        /tmp/smoke/usr/local/bin/silimate-selftest | tee /tmp/smoke/out.log
+        grep -q "SELFTEST: PASS" /tmp/smoke/out.log
+
+  cpp-cmake-ci:
+    name: cpp-cmake-ci
+    uses: ./.github/workflows/cpp-cmake-ci.yml
+    with:
+      actions-ref: ${{ github.sha }}
+      submodules: none
+      runners: >-
+        [{"name":"Ubuntu 22.04","family":"linux","runner":"ubuntu-22.04","arch":"x86_64"},
+         {"name":"macOS 15","family":"macos","runner":"macos-15","arch":"arm64"}]
+      apt-packages: zlib1g-dev
+      cmake-args: -DCMAKE_BUILD_TYPE=Release -S selftest
+      build-dir: build-selftest
+      test-command: |
+        ./build-selftest/silimate-selftest | grep -q "SELFTEST: PASS"
+
+  verify-artifacts:
+    name: Verify produced tarballs
+    needs: native-tarball
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          merge-multiple: true
+
+      - name: Check every platform produced a tarball with a bundled zlib
+        run: |
+          set -euo pipefail
+          for platform in anylinux-amd64 manylinux2014-amd64 macos-arm64; do
+            TARBALL="silimate-selftest-${platform}.tar.gz"
+            [ -f "$TARBALL" ] || { echo "::error::missing $TARBALL"; exit 1; }
+
+            echo "=== $TARBALL ==="
+            tar tzf "$TARBALL" | sort
+            # The whole point of the bundling scripts: zlib must travel with the
+            # binary rather than being borrowed from the build image
+            tar tzf "$TARBALL" | grep -qE 'usr/local/lib/libz\.(so|[0-9.]*dylib)' \
+              || { echo "::error::$TARBALL does not bundle zlib"; exit 1; }
+            tar tzf "$TARBALL" | grep -q 'usr/local/bin/silimate-selftest' \
+              || { echo "::error::$TARBALL has no binary"; exit 1; }
+          done
+          echo "All three tarballs are self-contained"

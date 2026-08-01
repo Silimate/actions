@@ -1,0 +1,247 @@
+name: Self-hosted Python check-in
+
+# The check-in pipeline shared by the self-hosted Python repos: wipe the stale clone,
+# check out with submodule SSH access, set up Python and a venv, lint, test, and email
+# the regression report.
+#
+# Every phase is optional, so a repo that only lints or only tests can still use this.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: Runner label.
+        required: false
+        type: string
+        default: self-hosted
+      workspace-name:
+        description: Clone directory to wipe before checkout. Defaults to the repo name.
+        required: false
+        type: string
+        default: ""
+      clean-workspace:
+        description: Wipe the previous clone first. Self-hosted runners reuse the working directory.
+        required: false
+        type: boolean
+        default: true
+      apt-packages:
+        description: Apt packages to install before anything else.
+        required: false
+        type: string
+        default: ""
+      submodules:
+        description: >
+          Submodule checkout mode: "none", "true" or "recursive". "none" rather
+          than "false" because actionlint rejects a quoted boolean for a string
+          input; "false" still works if you prefer it.
+        required: false
+        type: string
+        default: recursive
+      trust-github-host-keys:
+        description: ssh-keyscan github.com before checkout, for runners with an empty known_hosts.
+        required: false
+        type: boolean
+        default: false
+      python-version:
+        description: Python to install. Empty skips the Python setup step.
+        required: false
+        type: string
+        default: ""
+      python-setup-method:
+        description: "'action' for actions/setup-python, 'deadsnakes' to apt-install."
+        required: false
+        type: string
+        default: deadsnakes
+      install-command:
+        description: >
+          Shell that installs the project. Overrides the built-in venv creation, for
+          repos whose Makefile owns that (make install-python-requirements).
+        required: false
+        type: string
+        default: ""
+      venv-extras:
+        description: 'Extras for the built-in editable install, e.g. "dev". Ignored when install-command is set.'
+        required: false
+        type: string
+        default: dev
+      pre-test:
+        description: Shell run after install and before lint, for downloading prebuilt binaries or building docs.
+        required: false
+        type: string
+        default: ""
+      lint-command:
+        description: Shell that lints. Empty skips linting.
+        required: false
+        type: string
+        default: ""
+      test-command:
+        description: Shell that runs the tests. Empty skips testing.
+        required: false
+        type: string
+        default: ""
+      report-glob:
+        description: Glob for the HTML report to email. Empty skips the report.
+        required: false
+        type: string
+        default: ""
+      report-post-process:
+        description: Shell run before packaging the report, for title rewrites and coverage embedding.
+        required: false
+        type: string
+        default: ""
+      report-results-dir:
+        description: Directory tarred up and attached to the report email.
+        required: false
+        type: string
+        default: ""
+      report-tarball:
+        description: Path of the tarball made from report-results-dir.
+        required: false
+        type: string
+        default: ""
+      report-extra-attachments:
+        description: Additional comma-separated files to attach.
+        required: false
+        type: string
+        default: ""
+      working-directory:
+        description: Directory all the caller-supplied shell runs in.
+        required: false
+        type: string
+        default: "."
+      actions-ref:
+        description: Ref of Silimate/actions to use.
+        required: false
+        type: string
+        default: v1
+    secrets:
+      SSH_PRIVATE_KEY:
+        description: Deploy key for private submodules.
+        required: false
+      MAIL_USERNAME:
+        description: SMTP username for the regression report.
+        required: false
+      MAIL_PASSWORD:
+        description: SMTP password for the regression report.
+        required: false
+
+jobs:
+  checkin:
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Clean workspace
+        if: inputs.clean-workspace
+        working-directory: .
+        run: |
+          set -euo pipefail
+          NAME="${{ inputs.workspace-name }}"
+          NAME="${NAME:-$(basename "$GITHUB_REPOSITORY")}"
+          cd ..
+          # Container builds leave root-owned files behind, so this needs sudo
+          sudo rm -rf "$NAME"
+          mkdir -p "$NAME"
+
+      - name: Install apt packages
+        if: inputs.apt-packages != ''
+        working-directory: .
+        env:
+          APT_PACKAGES: ${{ inputs.apt-packages }}
+        run: |
+          set -euo pipefail
+          # python3-apt breaks after a deadsnakes-driven python3 swap, and its
+          # absence makes add-apt-repository fail on the next run
+          sudo apt-get install --reinstall -y python3-apt || true
+          sudo apt-get update -y
+          # shellcheck disable=SC2086
+          sudo apt-get install -y $APT_PACKAGES
+
+      - name: Trust github.com SSH host keys
+        if: inputs.trust-github-host-keys
+        working-directory: .
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          sort -u -o ~/.ssh/known_hosts ~/.ssh/known_hosts
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: ${{ inputs.submodules == 'none' && 'false' || inputs.submodules }}
+          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Check out Silimate/actions
+        uses: actions/checkout@v7
+        with:
+          repository: Silimate/actions
+          ref: ${{ inputs.actions-ref }}
+          path: .silimate-actions
+
+      - name: Set up Python
+        if: inputs.python-version != ''
+        uses: Silimate/actions/actions/setup-python@v1
+        with:
+          python-version: ${{ inputs.python-version }}
+          method: ${{ inputs.python-setup-method }}
+
+      - name: Install project
+        if: inputs.install-command != ''
+        env:
+          INSTALL_COMMAND: ${{ inputs.install-command }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$INSTALL_COMMAND" > .ci-install.sh
+          bash -e .ci-install.sh
+
+      - name: Create venv and install
+        if: inputs.install-command == ''
+        uses: Silimate/actions/actions/python-venv@v1
+        with:
+          extras: ${{ inputs.venv-extras }}
+          working-directory: ${{ inputs.working-directory }}
+
+      - name: Pre-test setup
+        if: inputs.pre-test != ''
+        env:
+          PRE_TEST: ${{ inputs.pre-test }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$PRE_TEST" > .ci-pre-test.sh
+          bash -e .ci-pre-test.sh
+
+      - name: Lint
+        if: inputs.lint-command != ''
+        env:
+          LINT_COMMAND: ${{ inputs.lint-command }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$LINT_COMMAND" > .ci-lint.sh
+          bash -e .ci-lint.sh
+
+      - name: Test
+        if: inputs.test-command != ''
+        env:
+          TEST_COMMAND: ${{ inputs.test-command }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$TEST_COMMAND" > .ci-test.sh
+          bash -e .ci-test.sh
+
+      # Reported even when the tests failed: a failing regression is exactly the
+      # one people need to see
+      - name: Send regression report
+        if: ${{ inputs.report-glob != '' && (success() || failure()) }}
+        uses: Silimate/actions/actions/send-regression-report@v1
+        with:
+          report-glob: ${{ inputs.report-glob }}
+          results-dir: ${{ inputs.report-results-dir }}
+          tarball: ${{ inputs.report-tarball }}
+          extra-attachments: ${{ inputs.report-extra-attachments }}
+          post-process: ${{ inputs.report-post-process }}
+          mail-username: ${{ secrets.MAIL_USERNAME }}
+          mail-password: ${{ secrets.MAIL_PASSWORD }}

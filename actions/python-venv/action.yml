@@ -1,0 +1,87 @@
+name: Python venv
+description: >
+  Create a virtualenv and install the project into it. Exports the venv's bin
+  directory onto PATH so later steps can just run python/pip without sourcing
+  an activate script.
+
+inputs:
+  path:
+    description: Where to create the venv.
+    required: false
+    default: .venv
+  extras:
+    description: 'Optional extras for the editable install, e.g. "dev" or "dev,test". Empty installs the bare project.'
+    required: false
+    default: ""
+  requirements-file:
+    description: Install from this requirements file instead of doing an editable install.
+    required: false
+    default: ""
+  install:
+    description: "'editable', 'requirements', or 'none' to only create the venv."
+    required: false
+    default: editable
+  upgrade-pip:
+    description: Upgrade pip before installing.
+    required: false
+    default: "true"
+  working-directory:
+    description: Directory to run in.
+    required: false
+    default: "."
+  git-ssh-command:
+    description: GIT_SSH_COMMAND for pip dependencies that come from private git repos.
+    required: false
+    default: ""
+
+outputs:
+  python:
+    description: Absolute path to the venv's python.
+    value: ${{ steps.create.outputs.python }}
+
+runs:
+  using: composite
+  steps:
+    - name: Create venv and install
+      id: create
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        VENV_PATH: ${{ inputs.path }}
+        EXTRAS: ${{ inputs.extras }}
+        REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
+        INSTALL_MODE: ${{ inputs.install }}
+        UPGRADE_PIP: ${{ inputs.upgrade-pip }}
+        GIT_SSH_COMMAND: ${{ inputs.git-ssh-command }}
+      run: |
+        set -euo pipefail
+
+        # --clear so a venv left over from a previous run on a self-hosted
+        # runner cannot leak stale packages into this one
+        python3 -m venv --clear "$VENV_PATH"
+        VENV_BIN="$(cd "$VENV_PATH/bin" && pwd)"
+
+        if [ "$UPGRADE_PIP" = "true" ]; then
+          "$VENV_BIN/pip" install --upgrade pip
+        fi
+
+        case "$INSTALL_MODE" in
+          editable)
+            if [ -n "$EXTRAS" ]; then
+              "$VENV_BIN/pip" install -e ".[$EXTRAS]"
+            else
+              "$VENV_BIN/pip" install -e .
+            fi
+            ;;
+          requirements)
+            : "${REQUIREMENTS_FILE:?install=requirements needs requirements-file}"
+            "$VENV_BIN/pip" install -r "$REQUIREMENTS_FILE"
+            ;;
+          none) ;;
+          *) echo "unknown install mode '$INSTALL_MODE'" >&2; exit 2 ;;
+        esac
+
+        # Put the venv first on PATH for every later step in the job
+        echo "$VENV_BIN" >> "$GITHUB_PATH"
+        echo "VIRTUAL_ENV=$(cd "$VENV_PATH" && pwd)" >> "$GITHUB_ENV"
+        echo "python=$VENV_BIN/python" >> "$GITHUB_OUTPUT"

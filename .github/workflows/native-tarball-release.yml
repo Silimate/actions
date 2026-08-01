@@ -1,0 +1,398 @@
+name: Native tarball release
+
+# Build a native binary for Linux (musl and glibc) and macOS, bundle its shared
+# library dependencies so the result is self-contained, and publish two releases: a
+# permanent build-<date>-<sha> one and a moving `latest` prerelease.
+#
+# The caller supplies only the build script; everything around it (container setup,
+# toolchain bootstrap, dependency bundling, packaging, release) lives here.
+#
+# This workflow calls scripts/ from its own checkout rather than `uses:`-ing the
+# composite actions, because `uses:` refs cannot be expressions and would pin to a
+# fixed tag even when the caller asked for a different actions-ref.
+
+on:
+  workflow_call:
+    inputs:
+      product:
+        description: Product name, used for tarball and artifact names.
+        required: true
+        type: string
+      build-script:
+        description: >
+          Shell that builds the project and installs it under $STAGE. Runs on every
+          platform with $STAGE, $PLATFORM, $NPROC and $SILIMATE_ACTIONS_DIR set.
+        required: true
+        type: string
+      alpine-packages:
+        description: Extra apk packages for the musl build. build-base, cmake, git and patchelf are always installed.
+        required: false
+        type: string
+        default: ""
+      centos-packages:
+        description: Extra yum packages for the glibc build. devtoolset-11, make, git, curl, patchelf and CMake are always installed.
+        required: false
+        type: string
+        default: ""
+      macos-packages:
+        description: Homebrew packages for the macOS build.
+        required: false
+        type: string
+        default: cmake
+      build-anylinux:
+        description: Build the Alpine/musl "anylinux" tarball.
+        required: false
+        type: boolean
+        default: true
+      build-manylinux:
+        description: Build the CentOS 7 "manylinux2014" tarball.
+        required: false
+        type: boolean
+        default: true
+      build-macos:
+        description: Build the macOS arm64 tarball.
+        required: false
+        type: boolean
+        default: true
+      alpine-image:
+        description: Image for the musl build.
+        required: false
+        type: string
+        default: alpine:3.21
+      centos-image:
+        description: Image for the glibc build.
+        required: false
+        type: string
+        default: centos:7
+      macos-runner:
+        description: Runner for the macOS build.
+        required: false
+        type: string
+        default: macos-15
+      stage-dir:
+        description: Prefix the build script installs into.
+        required: false
+        type: string
+        default: /tmp/install/usr/local
+      submodules:
+        description: >
+          Submodule checkout mode: "none", "true" or "recursive". "none" rather
+          than "false" because actionlint rejects a quoted boolean for a string
+          input; "false" still works if you prefer it.
+        required: false
+        type: string
+        default: "true"
+      smoke-test:
+        description: >
+          Optional shell run after each tarball is built, with $TARBALL set to its path.
+          Runs on a clean image, so it proves the archive is self-contained.
+        required: false
+        type: string
+        default: ""
+      smoke-test-image:
+        description: Image the Linux smoke tests run on. Deliberately not the build image.
+        required: false
+        type: string
+        default: ubuntu:22.04
+      extra-release-notes:
+        description: Markdown appended to the generated release notes.
+        required: false
+        type: string
+        default: ""
+      publish:
+        description: >
+          Create releases. False builds, smoke-tests and uploads artifacts but
+          publishes nothing, which is what pull-request and self-test runs want.
+        required: false
+        type: boolean
+        default: true
+      draft:
+        description: Publish as a draft and skip moving the `latest` tag. For dry runs.
+        required: false
+        type: boolean
+        default: false
+      actions-ref:
+        description: Ref of Silimate/actions to use for the shared scripts.
+        required: false
+        type: string
+        default: v1
+
+jobs:
+  build-anylinux:
+    if: inputs.build-anylinux
+    runs-on: ubuntu-latest
+    name: anylinux amd64 (musl)
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: ${{ inputs.submodules == 'none' && 'false' || inputs.submodules }}
+
+      # Checked out into the workspace, which is bind-mounted into the container:
+      # a composite action cannot reach inside a docker run
+      - name: Check out Silimate/actions
+        uses: actions/checkout@v7
+        with:
+          repository: Silimate/actions
+          ref: ${{ inputs.actions-ref }}
+          path: .silimate-actions
+
+      - name: Build in Alpine container
+        env:
+          BUILD_SCRIPT: ${{ inputs.build-script }}
+          PRODUCT: ${{ inputs.product }}
+          PACKAGES: ${{ inputs.alpine-packages }}
+          STAGE: ${{ inputs.stage-dir }}
+          IMAGE: ${{ inputs.alpine-image }}
+        run: |
+          set -euo pipefail
+          # Write the build script to a file rather than inlining it into sh -c,
+          # which is what makes the quoting in these builds unmaintainable
+          printf '%s\n' "$BUILD_SCRIPT" > build-script.sh
+
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" -w /src \
+            --platform linux/amd64 \
+            -e PRODUCT="$PRODUCT" \
+            -e PLATFORM=anylinux-amd64 \
+            -e PACKAGES="$PACKAGES" \
+            -e STAGE="$STAGE" \
+            -e BUILD_SCRIPT=/src/build-script.sh \
+            -e SILIMATE_ACTIONS_DIR=/src/.silimate-actions \
+            -e SRC_DIR=/src \
+            "$IMAGE" \
+            sh /src/.silimate-actions/scripts/container-build.sh musl
+
+      - name: Smoke test
+        if: inputs.smoke-test != ''
+        env:
+          SMOKE_TEST: ${{ inputs.smoke-test }}
+          IMAGE: ${{ inputs.alpine-image }}
+          TARBALL_NAME: ${{ inputs.product }}-anylinux-amd64.tar.gz
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$SMOKE_TEST" > smoke-test.sh
+          # A musl tarball can only be exercised on a musl distro, so this uses the
+          # build image; the container is fresh, so build artifacts cannot leak in
+          docker run --rm -v "${{ github.workspace }}:/src" -w /src \
+            --platform linux/amd64 \
+            -e TARBALL="/src/$TARBALL_NAME" \
+            "$IMAGE" sh -e /src/smoke-test.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.product }}-anylinux-amd64
+          path: ${{ inputs.product }}-anylinux-amd64.tar.gz
+          if-no-files-found: error
+
+  build-manylinux:
+    if: inputs.build-manylinux
+    runs-on: ubuntu-latest
+    name: manylinux2014 amd64 (glibc 2.17+)
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: ${{ inputs.submodules == 'none' && 'false' || inputs.submodules }}
+
+      - name: Check out Silimate/actions
+        uses: actions/checkout@v7
+        with:
+          repository: Silimate/actions
+          ref: ${{ inputs.actions-ref }}
+          path: .silimate-actions
+
+      - name: Build in CentOS 7 container
+        env:
+          BUILD_SCRIPT: ${{ inputs.build-script }}
+          PRODUCT: ${{ inputs.product }}
+          PACKAGES: ${{ inputs.centos-packages }}
+          STAGE: ${{ inputs.stage-dir }}
+          IMAGE: ${{ inputs.centos-image }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$BUILD_SCRIPT" > build-script.sh
+
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" -w /src \
+            --platform linux/amd64 \
+            -e PRODUCT="$PRODUCT" \
+            -e PLATFORM=manylinux2014-amd64 \
+            -e PACKAGES="$PACKAGES" \
+            -e STAGE="$STAGE" \
+            -e BUILD_SCRIPT=/src/build-script.sh \
+            -e SILIMATE_ACTIONS_DIR=/src/.silimate-actions \
+            -e SRC_DIR=/src \
+            "$IMAGE" \
+            bash /src/.silimate-actions/scripts/container-build.sh glibc
+
+      - name: Smoke test
+        if: inputs.smoke-test != ''
+        env:
+          SMOKE_TEST: ${{ inputs.smoke-test }}
+          IMAGE: ${{ inputs.smoke-test-image }}
+          TARBALL_NAME: ${{ inputs.product }}-manylinux2014-amd64.tar.gz
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$SMOKE_TEST" > smoke-test.sh
+          # A newer distro than the build image, with none of the build
+          # dependencies: this is what proves the tarball is self-contained
+          docker run --rm -v "${{ github.workspace }}:/src" -w /src \
+            --platform linux/amd64 \
+            -e TARBALL="/src/$TARBALL_NAME" \
+            "$IMAGE" bash -e /src/smoke-test.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.product }}-manylinux2014-amd64
+          path: ${{ inputs.product }}-manylinux2014-amd64.tar.gz
+          if-no-files-found: error
+
+  build-macos:
+    if: inputs.build-macos
+    runs-on: ${{ inputs.macos-runner }}
+    name: macOS arm64
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: ${{ inputs.submodules == 'none' && 'false' || inputs.submodules }}
+
+      - name: Check out Silimate/actions
+        uses: actions/checkout@v7
+        with:
+          repository: Silimate/actions
+          ref: ${{ inputs.actions-ref }}
+          path: .silimate-actions
+
+      - name: Install dependencies
+        if: inputs.macos-packages != ''
+        env:
+          MACOS_PACKAGES: ${{ inputs.macos-packages }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2086
+          brew install $MACOS_PACKAGES
+
+      - name: Build
+        env:
+          BUILD_SCRIPT: ${{ inputs.build-script }}
+          STAGE: ${{ inputs.stage-dir }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$BUILD_SCRIPT" > build-script.sh
+          mkdir -p "$STAGE/bin" "$STAGE/lib"
+          PLATFORM=macos-arm64 \
+          NPROC=$(sysctl -n hw.ncpu) \
+          SILIMATE_ACTIONS_DIR="$GITHUB_WORKSPACE/.silimate-actions" \
+            bash -e build-script.sh
+
+      - name: Bundle dylibs
+        env:
+          STAGE: ${{ inputs.stage-dir }}
+        run: ./.silimate-actions/scripts/bundle-macos-dylibs.sh "$STAGE"
+
+      - name: Create tarball
+        env:
+          STAGE: ${{ inputs.stage-dir }}
+          TARBALL_NAME: ${{ inputs.product }}-macos-arm64.tar.gz
+        run: |
+          set -euo pipefail
+          # Tar from the install root so the archive extracts with `tar xzf ... -C /`
+          cd "${STAGE%/usr/local}"
+          tar czf "$GITHUB_WORKSPACE/$TARBALL_NAME" .
+          ls -la "$GITHUB_WORKSPACE/$TARBALL_NAME"
+
+      - name: Smoke test
+        if: inputs.smoke-test != ''
+        env:
+          SMOKE_TEST: ${{ inputs.smoke-test }}
+          TARBALL_NAME: ${{ inputs.product }}-macos-arm64.tar.gz
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$SMOKE_TEST" > smoke-test.sh
+          TARBALL="$GITHUB_WORKSPACE/$TARBALL_NAME" bash -e smoke-test.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.product }}-macos-arm64
+          path: ${{ inputs.product }}-macos-arm64.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: [build-anylinux, build-manylinux, build-macos]
+    # Run as long as nothing failed; disabled platforms show up as skipped
+    if: ${{ inputs.publish && !cancelled() && !contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    name: Publish releases
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check out Silimate/actions
+        uses: actions/checkout@v7
+        with:
+          repository: Silimate/actions
+          ref: ${{ inputs.actions-ref }}
+          path: .silimate-actions
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          merge-multiple: true
+
+      - name: Collect build metadata
+        id: meta
+        run: ./.silimate-actions/scripts/build-metadata.sh
+
+      - name: Generate release notes
+        id: notes
+        env:
+          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
+          FULL_SHA: ${{ steps.meta.outputs.full_sha }}
+          DATE: ${{ steps.meta.outputs.date }}
+          EXTRA_NOTES: ${{ inputs.extra-release-notes }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: ./.silimate-actions/scripts/release-notes.sh
+
+      - name: Create permanent release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          TITLE: ${{ steps.meta.outputs.title }}
+          ASSETS: ${{ steps.notes.outputs.assets }}
+        run: |
+          set -euo pipefail
+          DRAFT_FLAG=""
+          if [ "${{ inputs.draft }}" = "true" ]; then
+            DRAFT_FLAG="--draft"
+          fi
+          # shellcheck disable=SC2086
+          gh release create "$TAG" $ASSETS \
+            --target "${{ github.sha }}" \
+            --title "$TITLE" \
+            --notes-file release_notes.md \
+            $DRAFT_FLAG
+
+      - name: Update latest release
+        if: ${{ !inputs.draft }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DATE: ${{ steps.meta.outputs.date }}
+          ASSETS: ${{ steps.notes.outputs.assets }}
+        run: |
+          set -euo pipefail
+          # `latest` is a moving pointer at the newest build, so the tag and the
+          # release it backs are both replaced on every run
+          git tag -f latest HEAD
+          git push -f origin latest
+          gh release delete latest --yes 2>/dev/null || true
+          # shellcheck disable=SC2086
+          gh release create latest $ASSETS \
+            --target "${{ github.sha }}" \
+            --title "Latest Build (${DATE})" \
+            --notes-file release_notes.md \
+            --prerelease
