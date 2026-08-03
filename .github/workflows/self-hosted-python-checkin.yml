@@ -149,6 +149,12 @@ on:
       MAIL_PASSWORD:
         description: SMTP password for the regression report.
         required: false
+      PIP_INDEX_URL:
+        description: >
+          Optional authenticated primary pip index (e.g. Silimate private
+          wheels). When set, exported for install-command / ensure_venv with
+          PyPI as PIP_EXTRA_INDEX_URL.
+        required: false
 
 jobs:
   checkin:
@@ -227,8 +233,18 @@ jobs:
         if: inputs.install-command != ''
         env:
           INSTALL_COMMAND: ${{ inputs.install-command }}
+          PIP_INDEX_URL: ${{ secrets.PIP_INDEX_URL }}
         run: |
           set -euo pipefail
+          # Only export a private index when the caller passed one; an empty
+          # PIP_INDEX_URL would break pip's default PyPI resolution.
+          if [ -n "${PIP_INDEX_URL:-}" ]; then
+            export PIP_EXTRA_INDEX_URL="${PIP_EXTRA_INDEX_URL:-https://pypi.org/simple}"
+            echo "PIP_INDEX_URL=$PIP_INDEX_URL" >> "$GITHUB_ENV"
+            echo "PIP_EXTRA_INDEX_URL=$PIP_EXTRA_INDEX_URL" >> "$GITHUB_ENV"
+          else
+            unset PIP_INDEX_URL
+          fi
           printf '%s\n' "$INSTALL_COMMAND" > .ci-install.sh
           bash -e .ci-install.sh
 
