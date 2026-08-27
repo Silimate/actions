@@ -13,8 +13,8 @@ set -eu
 
 VERSION="${1:-3.8.2}"
 SRC=$(mktemp -d)
-wget -O "$SRC/bison.tar.gz" "https://ftp.gnu.org/gnu/bison/bison-${VERSION}.tar.gz" \
-  || wget -O "$SRC/bison.tar.gz" "https://mirrors.kernel.org/gnu/bison/bison-${VERSION}.tar.gz"
+curl -fL --retry 5 --retry-delay 3 -o "$SRC/bison.tar.gz" "https://ftp.gnu.org/gnu/bison/bison-${VERSION}.tar.gz" \
+  || curl -fL --retry 5 --retry-delay 3 -o "$SRC/bison.tar.gz" "https://mirrors.kernel.org/gnu/bison/bison-${VERSION}.tar.gz"
 tar -xzC "$SRC" -f "$SRC/bison.tar.gz"
 build_install "$SRC/bison-${VERSION}"
 rm -rf "$SRC"
