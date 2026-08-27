@@ -12,7 +12,10 @@ set -eu
 . "$(dirname "$0")/_common.sh"
 
 VERSION="${1:-3.8.2}"
-SRC=$(fetch_source "https://ftp.gnu.org/gnu/bison/bison-${VERSION}.tar.gz")
+SRC=$(mktemp -d)
+curl -fL --retry 5 --retry-delay 3 -o "$SRC/bison.tar.gz" "https://ftp.gnu.org/gnu/bison/bison-${VERSION}.tar.gz" \
+  || curl -fL --retry 5 --retry-delay 3 -o "$SRC/bison.tar.gz" "https://mirrors.kernel.org/gnu/bison/bison-${VERSION}.tar.gz"
+tar -xzC "$SRC" -f "$SRC/bison.tar.gz"
 build_install "$SRC/bison-${VERSION}"
 rm -rf "$SRC"
 echo "install-bison.sh: installed bison ${VERSION}"
