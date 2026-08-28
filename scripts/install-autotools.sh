@@ -19,7 +19,10 @@ for pkg in "autoconf/autoconf-${AUTOCONF_VERSION}" \
            "automake/automake-${AUTOMAKE_VERSION}" \
            "libtool/libtool-${LIBTOOL_VERSION}"; do
   name=${pkg#*/}
-  SRC=$(fetch_source "https://ftp.gnu.org/gnu/${pkg}.tar.gz")
+  SRC=$(mktemp -d)
+  curl -fL --retry 5 --retry-delay 3 -o "$SRC/${name}.tar.gz" "https://ftp.gnu.org/gnu/${pkg}.tar.gz" \
+    || curl -fL --retry 5 --retry-delay 3 -o "$SRC/${name}.tar.gz" "https://mirrors.kernel.org/gnu/${pkg}.tar.gz"
+  tar -xzC "$SRC" -f "$SRC/${name}.tar.gz"
   build_install "$SRC/$name" --prefix="$PREFIX"
   cd /
   rm -rf "$SRC"
