@@ -155,6 +155,13 @@ on:
           wheels). When set, exported for install-command / ensure_venv with
           PyPI as PIP_EXTRA_INDEX_URL.
         required: false
+      HF_TOKEN:
+        description: >
+          Exported as HF_TOKEN. Read token for private Hugging Face repos that
+          tests download from, e.g. the SMDB regression dataset. The hf CLI and
+          huggingface_hub both pick this up from the environment, so no login
+          step is needed.
+        required: false
 
 jobs:
   checkin:
@@ -163,6 +170,7 @@ jobs:
       contents: read
     env:
       GH_TOKEN: ${{ secrets.GH_PAT }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
