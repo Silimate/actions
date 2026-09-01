@@ -134,6 +134,18 @@ on:
         required: false
         type: string
         default: v1
+      fetch-depth:
+        description: >
+          Git fetch depth for the repo checkout. 0 is full history (needed for
+          setuptools-scm on releases). 1 is a shallow clone.
+        required: false
+        type: number
+        default: 0
+      fetch-tags:
+        description: Fetch tags even on a shallow clone so setuptools-scm can version.
+        required: false
+        type: boolean
+        default: true
     secrets:
       SSH_PRIVATE_KEY:
         description: Deploy key for private submodules.
@@ -212,7 +224,8 @@ jobs:
 
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0
+          fetch-depth: ${{ inputs.fetch-depth }}
+          fetch-tags: ${{ inputs.fetch-tags }}
           submodules: ${{ inputs.submodules == 'none' && 'false' || inputs.submodules }}
           ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
