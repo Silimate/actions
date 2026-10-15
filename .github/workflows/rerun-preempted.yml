@@ -1,0 +1,57 @@
+name: Rerun preempted jobs
+
+# Called from a workflow_run trigger when a CI run completes. Reruns the jobs whose runner was
+# shut down mid-job (a Spot preemption, a runner restart), never jobs that genuinely failed.
+
+on:
+  workflow_call:
+
+jobs:
+  rerun:
+    # The attempt cap stops a job that keeps getting preempted
+    if: github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN: ${{ github.event.workflow_run.id }}
+      ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+      WORKFLOW: ${{ github.event.workflow_run.workflow_id }}
+      BRANCH: ${{ github.event.workflow_run.head_branch }}
+      EVENT: ${{ github.event.workflow_run.event }}
+    steps:
+      - name: Rerun preempted jobs
+        run: |
+          set -euo pipefail
+          api="repos/$GITHUB_REPOSITORY/actions"
+
+          # Captured first: set -e cannot see a failure inside mapfile's process substitution
+          jobs=$(gh api --paginate "$api/runs/$RUN/attempts/$ATTEMPT/jobs" \
+            --jq '.jobs[] | select(.conclusion == "failure") | .id')
+          mapfile -t failed < <(printf '%s' "$jobs")
+          preempted=()
+          for job in "${failed[@]}"; do
+            # gh api refuses to print logs that contain escape codes
+            curl -sfL --retry 3 -H "Authorization: Bearer $GH_TOKEN" -o job.log "$GITHUB_API_URL/$api/jobs/$job/logs"
+            if grep -qF 'The runner has received a shutdown signal' job.log; then preempted+=("$job"); fi
+          done
+          echo "${#failed[@]} failed jobs, ${#preempted[@]} preempted: ${preempted[*]}"
+          if [ "${#preempted[@]}" -eq 0 ]; then exit 0; fi
+
+          # Rerunning a superseded run would cancel its successor through the caller's concurrency
+          # group. Checked right before the rerun to keep the race window small.
+          latest=$(gh api -X GET "$api/workflows/$WORKFLOW/runs" -f branch="$BRANCH" -f event="$EVENT" \
+            -F per_page=1 --jq '.workflow_runs[0].id')
+          if [ "$latest" != "$RUN" ]; then
+            echo "Run $RUN was superseded by run $latest"
+            exit 0
+          fi
+
+          # GitHub reruns only one job per attempt, so several preempted jobs need rerun-failed-jobs,
+          # which is safe only when nothing else failed.
+          if [ "${#preempted[@]}" -eq "${#failed[@]}" ]; then
+            gh api -X POST "$api/runs/$RUN/rerun-failed-jobs"
+          else
+            gh api -X POST "$api/jobs/${preempted[0]}/rerun"
+          fi

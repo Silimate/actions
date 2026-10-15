@@ -95,6 +95,25 @@ Every phase is optional, so a repo that only lints, or whose own `make test` bui
 (`create-venv: false`), still fits. The venv is put on `PATH`, so caller commands never need
 `source .venv/bin/activate`.
 
+### `rerun-preempted.yml`
+
+Reruns jobs that failed because their runner shut down mid-job (a Spot VM preemption or a runner
+restart), and leaves genuine failures alone. It skips runs a newer push has superseded and stops
+after the third attempt. A repo opts in with a `workflow_run` caller on its default branch,
+naming its CI workflows:
+
+```yaml
+on:
+  workflow_run:
+    workflows: [Run checkin tests]
+    types: [completed]
+jobs:
+  rerun:
+    uses: Silimate/actions/.github/workflows/rerun-preempted.yml@v1
+    permissions:
+      actions: write
+```
+
 ## Source installers
 
 `scripts/install-*.sh` build the dependencies no distro packages, or that CentOS 7 ships too old
