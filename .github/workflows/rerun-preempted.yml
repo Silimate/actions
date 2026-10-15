@@ -26,16 +26,10 @@ jobs:
           set -euo pipefail
           api="repos/$GITHUB_REPOSITORY/actions"
 
-          # Rerunning a superseded run would cancel its successor through the caller's concurrency group
-          latest=$(gh api -X GET "$api/workflows/$WORKFLOW/runs" -f branch="$BRANCH" -f event="$EVENT" \
-            -F per_page=1 --jq '.workflow_runs[0].id')
-          if [ "$latest" != "$RUN" ]; then
-            echo "Run $RUN was superseded by run $latest"
-            exit 0
-          fi
-
-          mapfile -t failed < <(gh api --paginate "$api/runs/$RUN/attempts/$ATTEMPT/jobs" \
+          # Captured first: set -e cannot see a failure inside mapfile's process substitution
+          jobs=$(gh api --paginate "$api/runs/$RUN/attempts/$ATTEMPT/jobs" \
             --jq '.jobs[] | select(.conclusion == "failure") | .id')
+          mapfile -t failed < <(printf '%s' "$jobs")
           preempted=()
           for job in "${failed[@]}"; do
             # gh api refuses to print logs that contain escape codes
@@ -43,12 +37,20 @@ jobs:
             if grep -qF 'The runner has received a shutdown signal' job.log; then preempted+=("$job"); fi
           done
           echo "${#failed[@]} failed jobs, ${#preempted[@]} preempted: ${preempted[*]}"
+          if [ "${#preempted[@]}" -eq 0 ]; then exit 0; fi
+
+          # Rerunning a superseded run would cancel its successor through the caller's concurrency
+          # group. Checked right before the rerun to keep the race window small.
+          latest=$(gh api -X GET "$api/workflows/$WORKFLOW/runs" -f branch="$BRANCH" -f event="$EVENT" \
+            -F per_page=1 --jq '.workflow_runs[0].id')
+          if [ "$latest" != "$RUN" ]; then
+            echo "Run $RUN was superseded by run $latest"
+            exit 0
+          fi
 
           # GitHub reruns only one job per attempt, so several preempted jobs need rerun-failed-jobs,
           # which is safe only when nothing else failed.
-          if [ "${#preempted[@]}" -eq 0 ]; then
-            exit 0
-          elif [ "${#preempted[@]}" -eq "${#failed[@]}" ]; then
+          if [ "${#preempted[@]}" -eq "${#failed[@]}" ]; then
             gh api -X POST "$api/runs/$RUN/rerun-failed-jobs"
           else
             gh api -X POST "$api/jobs/${preempted[0]}/rerun"
