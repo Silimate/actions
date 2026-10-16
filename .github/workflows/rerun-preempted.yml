@@ -28,10 +28,14 @@ jobs:
 
           # Captured first: set -e cannot see a failure inside mapfile's process substitution
           jobs=$(gh api --paginate "$api/runs/$RUN/attempts/$ATTEMPT/jobs" \
-            --jq '.jobs[] | select(.conclusion == "failure") | .id')
+            --jq '.jobs[] | select(.conclusion == "failure") | "\(.id) \(.runner_name // "")"')
           mapfile -t failed < <(printf '%s' "$jobs")
           preempted=()
-          for job in "${failed[@]}"; do
+          for entry in "${failed[@]}"; do
+            read -r job runner <<< "$entry"
+            # A job that failed without a runner (a results gate whose needs failed) has no log
+            # and can't have been preempted
+            if [ -z "$runner" ]; then continue; fi
             # gh api refuses to print logs that contain escape codes
             curl -sfL --retry 3 -H "Authorization: Bearer $GH_TOKEN" -o job.log "$GITHUB_API_URL/$api/jobs/$job/logs"
             if grep -qF 'The runner has received a shutdown signal' job.log; then preempted+=("$job"); fi
