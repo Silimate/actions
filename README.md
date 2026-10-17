@@ -87,8 +87,7 @@ Matrix CMake build and `ctest` across Ubuntu and macOS, used by `silisizer`, `li
 
 ### `self-hosted-python-checkin.yml`
 
-The self-hosted Python check-in pipeline used by `preqorsor`, `smdb`,
-`silimate-aon`, `opentitan-bugs`, and `opentitan-bugbench`: workspace wipe, checkout with
+The self-hosted Python check-in pipeline used by Silimate's Python repos: workspace wipe, checkout with
 submodule SSH, Python setup, venv, lint, test, and the regression email report.
 
 Every phase is optional, so a repo that only lints, or whose own `make test` builds the venv
