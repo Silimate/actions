@@ -99,13 +99,30 @@ jobs:
 
       - name: Apt dependencies
         if: matrix.os.family == 'linux' && inputs.apt-packages != ''
+        # apt-get update can stall on a slow mirror with no timeout of its own.
+        # Longer than the Python check-in's 5 because these lists are bigger and
+        # often land on a fresh hosted runner with nothing preinstalled.
+        timeout-minutes: 10
         env:
           APT_PACKAGES: ${{ inputs.apt-packages }}
         run: |
           set -euo pipefail
-          sudo apt-get update
+          # Self-hosted runners keep their packages between jobs, so skip apt,
+          # and with it the network, when every package is already installed
+          missing=""
+          for pkg in $APT_PACKAGES; do
+            status=$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)
+            [ "$status" = "install ok installed" ] || missing="$missing $pkg"
+          done
+          if [ -z "$missing" ]; then
+            echo "Already installed: $APT_PACKAGES"
+            exit 0
+          fi
+          echo "Missing:$missing"
+
+          sudo apt-get -o Acquire::Retries=3 update
           # shellcheck disable=SC2086
-          sudo apt-get install -y $APT_PACKAGES
+          sudo apt-get -o Acquire::Retries=3 install -y $APT_PACKAGES
 
       - name: macOS dependencies
         if: matrix.os.family == 'macos' && inputs.macos-setup != ''

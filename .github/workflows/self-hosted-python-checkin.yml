@@ -202,16 +202,31 @@ jobs:
       - name: Install apt packages
         if: inputs.apt-packages != ''
         working-directory: .
+        # apt-get update can stall on a slow mirror with no timeout of its own
+        timeout-minutes: 5
         env:
           APT_PACKAGES: ${{ inputs.apt-packages }}
         run: |
           set -euo pipefail
+          # Self-hosted runners keep their packages between jobs, so skip apt,
+          # and with it the network, when every package is already installed
+          missing=""
+          for pkg in $APT_PACKAGES; do
+            status=$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)
+            [ "$status" = "install ok installed" ] || missing="$missing $pkg"
+          done
+          if [ -z "$missing" ]; then
+            echo "Already installed: $APT_PACKAGES"
+            exit 0
+          fi
+          echo "Missing:$missing"
+
           # python3-apt breaks after a deadsnakes-driven python3 swap, and its
           # absence makes add-apt-repository fail on the next run
           sudo apt-get install --reinstall -y python3-apt || true
-          sudo apt-get update -y
+          sudo apt-get -o Acquire::Retries=3 update -y
           # shellcheck disable=SC2086
-          sudo apt-get install -y $APT_PACKAGES
+          sudo apt-get -o Acquire::Retries=3 install -y $APT_PACKAGES
 
       - name: Trust github.com SSH host keys
         if: inputs.trust-github-host-keys
